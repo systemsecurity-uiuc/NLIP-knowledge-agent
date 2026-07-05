@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nlip-knowledge-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nlip-knowledge-agent
+  template:
+    metadata:
+      labels:
+        app: nlip-knowledge-agent
+    spec:
+      containers:
+        - name: nlip-knowledge-agent
+          image: nlip-knowledge-agent:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: NLIP_MODEL_NAME
+              value: llama-4-scout
+            - name: KNOWLEDGE_BASE_PATH
+              value: /app/data/knowledge_base.json
+            - name: CONFIDENTIAL_AGENT_URL
+              value: http://confidential-agent:8080/nlip
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nlip-knowledge-agent
+spec:
+  selector:
+    app: nlip-knowledge-agent
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

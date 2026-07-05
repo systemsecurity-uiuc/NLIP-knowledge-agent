@@ -1,0 +1,12 @@
+[
+  {
+    "source": "ECMA-430 Natural Language Interaction Protocol",
+    "url": "https://ecma-international.org/wp-content/uploads/ECMA-430_1st_edition_december_2025.pdf",
+    "text": "NLIP messages are JSON objects. The required fields are format, subformat, and content. Optional fields include messageType and submessages."
+  },
+  {
+    "source": "ECMA-434 NLIP Security Profiles",
+    "url": "https://ecma-international.org/wp-content/uploads/ECMA-434_1st_edition_december_2025.pdf",
+    "text": "ECMA-434 defines security profiles for NLIP deployments, including mandatory baseline controls and stronger enterprise/service-provider profiles."
+  }
+]
