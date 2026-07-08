@@ -100,18 +100,29 @@ def ask_llm(query: str, contexts: list[dict[str, Any]]) -> str | None:
         for item in contexts
     )
     prompt = (
-        "Answer the user's NLIP question using the provided sources. "
+        "You are an NLIP knowledge assistant. NLIP means Natural Language "
+        "Interaction Protocol. Answer the user's NLIP question using the provided sources. "
         "If the sources are insufficient, say so. Include source names when useful.\n\n"
-        f"Sources:\n{context_text}\n\nQuestion: {query}"
+        f"Sources:\n{context_text}\n\nQuestion: {query}\n\nAnswer:"
     )
-    body = {
-        "model": MODEL_NAME,
-        "messages": [
-            {"role": "system", "content": "You are an NLIP knowledge assistant."},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0.2,
-    }
+    if "chat/completions" in JETSTREAM_CHAT_URL:
+        body = {
+            "model": MODEL_NAME,
+            "messages": [
+                {"role": "system", "content": "You are an NLIP knowledge assistant."},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.2,
+            "max_tokens": 400,
+        }
+    else:
+        body = {
+            "model": MODEL_NAME,
+            "prompt": prompt,
+            "temperature": 0.1,
+            "max_tokens": 180,
+            "stop": ["\nThe answer", "\nThe question", "\nWe need", "\n\nThe user", "assistantfinal"],
+        }
     headers = {"Content-Type": "application/json"}
     if JETSTREAM_API_KEY:
         headers["Authorization"] = f"Bearer {JETSTREAM_API_KEY}"
@@ -124,7 +135,45 @@ def ask_llm(query: str, contexts: list[dict[str, Any]]) -> str | None:
     )
     with urllib.request.urlopen(req, timeout=60) as response:
         payload = json.loads(response.read().decode("utf-8"))
-    return payload["choices"][0]["message"]["content"]
+
+    choice = payload["choices"][0]
+    if "message" in choice:
+        answer = choice["message"]["content"]
+    else:
+        answer = choice.get("text", "").strip()
+
+    for marker in ("assistantfinal", "assistant final", "Final answer:"):
+        if marker in answer:
+            answer = answer.split(marker, 1)[1].strip()
+
+    if "\n\n" in answer and answer.lower().startswith("the user asks"):
+        answer = answer.split("\n\n", 1)[1].strip()
+
+    for starter in ("NLIP stands", "NLIP, or", "Natural Language Interaction Protocol"):
+        idx = answer.find(starter)
+        if idx > 0:
+            answer = answer[idx:].strip()
+            break
+
+    for bad_tail in (
+        "\n```",
+        "```json",
+        "\nThe answer",
+        "\nThe question",
+        "\nQuestion:",
+        "\nWe need",
+        "\nIt looks like",
+        "\nIt appears",
+        " ... ...",
+        "......",
+    ):
+        if bad_tail in answer:
+            answer = answer.split(bad_tail, 1)[0].strip()
+
+    if "\n\n" in answer:
+        answer = answer.split("\n\n", 1)[0].strip()
+
+    return answer
 
 
 def call_confidential_agent(query: str) -> dict[str, Any] | None:
