@@ -121,7 +121,7 @@ def ask_llm(query: str, contexts: list[dict[str, Any]]) -> str | None:
             "prompt": prompt,
             "temperature": 0.1,
             "max_tokens": 180,
-            "stop": ["\nThe answer", "\nThe question", "\nWe need", "\n\nThe user", "assistantfinal"],
+            "stop": ["\nThe answer", "\nThe question", "\nWe need", "assistantfinal"],
         }
     headers = {"Content-Type": "application/json"}
     if JETSTREAM_API_KEY:
