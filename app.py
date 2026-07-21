@@ -39,7 +39,7 @@ app.add_middleware(
 def nlip_response(content: Any, subformat: str = "json") -> dict[str, Any]:
     return {
         "messageType": "response",
-        "format": "json",
+        "format": "structured",
         "subformat": subformat,
         "content": content,
     }
@@ -256,5 +256,5 @@ def handle_nlip(message: NLIPMessage) -> dict[str, Any]:
             ],
             "extra": extra,
         },
-        subformat="nlip-agent-response",
+        subformat="json",
     )

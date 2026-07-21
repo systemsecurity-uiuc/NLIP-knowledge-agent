@@ -18,8 +18,8 @@ It responds with:
 ```json
 {
   "messageType": "response",
-  "format": "json",
-  "subformat": "nlip-agent-response",
+  "format": "structured",
+  "subformat": "json",
   "content": {
     "agent": "nlip-knowledge-agent",
     "answer": "...",
