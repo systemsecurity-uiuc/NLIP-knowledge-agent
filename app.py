@@ -16,6 +16,7 @@ JETSTREAM_CHAT_URL = os.getenv("JETSTREAM_CHAT_URL", "")
 JETSTREAM_API_KEY = os.getenv("JETSTREAM_API_KEY", "")
 CONFIDENTIAL_AGENT_URL = os.getenv("CONFIDENTIAL_AGENT_URL", "")
 KNOWLEDGE_BASE_PATH = Path(os.getenv("KNOWLEDGE_BASE_PATH", "data/knowledge_base.json"))
+RETRIEVAL_MIN_SCORE = float(os.getenv("RETRIEVAL_MIN_SCORE", "0.2"))
 
 
 class NLIPMessage(BaseModel):
@@ -91,20 +92,77 @@ def retrieve(query: str, limit: int = 4) -> list[dict[str, Any]]:
     return results
 
 
+def retrieval_mode(contexts: list[dict[str, Any]]) -> str:
+    if contexts and contexts[0].get("score", 0) >= RETRIEVAL_MIN_SCORE:
+        return "retrieval_augmented"
+    return "general_llm"
+
+
+def build_prompt(query: str, contexts: list[dict[str, Any]]) -> str:
+    if contexts:
+        context_text = "\n\n".join(
+            f"Source: {item.get('source', 'unknown')}\n{item.get('text', '')}"
+            for item in contexts
+        )
+        return (
+            "You are an NLIP knowledge assistant. NLIP means Natural Language "
+            "Interaction Protocol. Answer the user's question clearly and concisely. "
+            "Use the provided source excerpts when they are relevant. If the excerpts "
+            "are only partially relevant, say what you can from them and avoid making "
+            "unsupported claims. Mention source names briefly when useful.\n\n"
+            f"Source excerpts:\n{context_text}\n\nQuestion: {query}\n\nAnswer:"
+        )
+
+    return (
+        "You are an NLIP knowledge assistant. NLIP means Natural Language "
+        "Interaction Protocol. Answer the user's question clearly and concisely. "
+        "If the question is outside the loaded NLIP material, answer from general "
+        "knowledge and say that no local source excerpt was used.\n\n"
+        f"Question: {query}\n\nAnswer:"
+    )
+
+
+def clean_llm_answer(answer: str) -> str:
+    answer = answer.strip()
+    for marker in ("assistantfinal", "assistant final", "Final answer:"):
+        if marker in answer:
+            answer = answer.split(marker, 1)[1].strip()
+
+    if "\n\n" in answer and answer.lower().startswith("the user asks"):
+        answer = answer.split("\n\n", 1)[1].strip()
+
+    for starter in ("NLIP stands", "NLIP, or", "Natural Language Interaction Protocol"):
+        idx = answer.find(starter)
+        if idx > 0:
+            answer = answer[idx:].strip()
+            break
+
+    for bad_tail in (
+        "\n```",
+        "```json",
+        "\nThe answer",
+        "\nThe question",
+        "\nQuestion:",
+        "\nWe need",
+        "\nIt looks like",
+        "\nIt appears",
+        " ... ...",
+        "......",
+    ):
+        if bad_tail in answer:
+            answer = answer.split(bad_tail, 1)[0].strip()
+
+    if "\n\n" in answer:
+        answer = answer.split("\n\n", 1)[0].strip()
+
+    return answer
+
+
 def ask_llm(query: str, contexts: list[dict[str, Any]]) -> str | None:
     if not JETSTREAM_CHAT_URL:
         return None
 
-    context_text = "\n\n".join(
-        f"Source: {item.get('source', 'unknown')}\n{item.get('text', '')}"
-        for item in contexts
-    )
-    prompt = (
-        "You are an NLIP knowledge assistant. NLIP means Natural Language "
-        "Interaction Protocol. Answer the user's NLIP question using the provided sources. "
-        "If the sources are insufficient, say so. Include source names when useful.\n\n"
-        f"Sources:\n{context_text}\n\nQuestion: {query}\n\nAnswer:"
-    )
+    prompt = build_prompt(query, contexts)
     if "chat/completions" in JETSTREAM_CHAT_URL:
         body = {
             "model": MODEL_NAME,
@@ -142,38 +200,7 @@ def ask_llm(query: str, contexts: list[dict[str, Any]]) -> str | None:
     else:
         answer = choice.get("text", "").strip()
 
-    for marker in ("assistantfinal", "assistant final", "Final answer:"):
-        if marker in answer:
-            answer = answer.split(marker, 1)[1].strip()
-
-    if "\n\n" in answer and answer.lower().startswith("the user asks"):
-        answer = answer.split("\n\n", 1)[1].strip()
-
-    for starter in ("NLIP stands", "NLIP, or", "Natural Language Interaction Protocol"):
-        idx = answer.find(starter)
-        if idx > 0:
-            answer = answer[idx:].strip()
-            break
-
-    for bad_tail in (
-        "\n```",
-        "```json",
-        "\nThe answer",
-        "\nThe question",
-        "\nQuestion:",
-        "\nWe need",
-        "\nIt looks like",
-        "\nIt appears",
-        " ... ...",
-        "......",
-    ):
-        if bad_tail in answer:
-            answer = answer.split(bad_tail, 1)[0].strip()
-
-    if "\n\n" in answer:
-        answer = answer.split("\n\n", 1)[0].strip()
-
-    return answer
+    return clean_llm_answer(answer)
 
 
 def call_confidential_agent(query: str) -> dict[str, Any] | None:
@@ -207,13 +234,41 @@ def health() -> dict[str, Any]:
     }
 
 
+@app.get("/model-health")
+def model_health() -> dict[str, Any]:
+    if not JETSTREAM_CHAT_URL:
+        return {
+            "status": "not_configured",
+            "agent": AGENT_NAME,
+            "model": MODEL_NAME,
+            "message": "JETSTREAM_CHAT_URL is not set.",
+        }
+    try:
+        answer = ask_llm("Reply with only: model reachable", [])
+    except Exception as error:
+        return {
+            "status": "error",
+            "agent": AGENT_NAME,
+            "model": MODEL_NAME,
+            "message": str(error),
+        }
+    return {
+        "status": "ok" if answer else "empty_response",
+        "agent": AGENT_NAME,
+        "model": MODEL_NAME,
+        "sample": answer,
+    }
+
+
 @app.post("/nlip")
 def handle_nlip(message: NLIPMessage) -> dict[str, Any]:
     query = extract_query(message)
     contexts = retrieve(query)
+    mode = retrieval_mode(contexts)
+    llm_contexts = contexts if mode == "retrieval_augmented" else []
 
     try:
-        answer = ask_llm(query, contexts)
+        answer = ask_llm(query, llm_contexts)
     except Exception as error:
         answer = None
         llm_error = str(error)
@@ -222,9 +277,9 @@ def handle_nlip(message: NLIPMessage) -> dict[str, Any]:
 
     if not answer:
         if contexts:
-            answer = "I found potentially relevant NLIP source material, but no LLM answer was generated."
+            answer = "I found potentially relevant NLIP source material, but the LLM did not generate an answer."
         else:
-            answer = "The current knowledge base does not contain enough information."
+            answer = "I could not generate an answer because the LLM is unavailable and no local source matched strongly."
 
     extra: dict[str, Any] = {}
     query_lower = query.lower()
@@ -246,6 +301,7 @@ def handle_nlip(message: NLIPMessage) -> dict[str, Any]:
             "answer": answer,
             "received_query": query,
             "model": MODEL_NAME,
+            "answer_mode": mode,
             "sources": [
                 {
                     "source": item.get("source"),

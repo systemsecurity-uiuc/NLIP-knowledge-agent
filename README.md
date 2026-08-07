@@ -55,11 +55,16 @@ The builder loads the NLIP website, ECMA TC56 page, ECMA-430 through ECMA-434, E
 - `NLIP_MODEL_NAME`: model name, for example `llama-4-scout`
 - `KNOWLEDGE_BASE_PATH`: path to the retrieval knowledge base
 - `CONFIDENTIAL_AGENT_URL`: Skupper-reachable AWS confidential agent URL
+- `RETRIEVAL_MIN_SCORE`: minimum retrieval score before the agent treats source context as strong enough for retrieval-augmented answering
 
 ## Test
 
 ```bash
+curl -s http://localhost:8080/health
+curl -s http://localhost:8080/model-health
 curl -s -X POST http://localhost:8080/nlip \
   -H 'Content-Type: application/json' \
   -d '{"messageType":"request","format":"text","subformat":"english","content":"What is NLIP?"}'
 ```
+
+The agent answers with retrieved NLIP sources when they match strongly. If retrieval is weak, it falls back to a general LLM answer instead of behaving like a fixed FAQ.
