@@ -17,6 +17,25 @@ JETSTREAM_API_KEY = os.getenv("JETSTREAM_API_KEY", "")
 CONFIDENTIAL_AGENT_URL = os.getenv("CONFIDENTIAL_AGENT_URL", "")
 KNOWLEDGE_BASE_PATH = Path(os.getenv("KNOWLEDGE_BASE_PATH", "data/knowledge_base.json"))
 RETRIEVAL_MIN_SCORE = float(os.getenv("RETRIEVAL_MIN_SCORE", "0.2"))
+SOURCE_KEYWORD_BOOSTS = {
+    "what is nlip": "ECMA-430 Natural Language Interaction Protocol",
+    "natural language interaction protocol": "ECMA-430 Natural Language Interaction Protocol",
+    "ecma-430": "ECMA-430 Natural Language Interaction Protocol",
+    "ecma 430": "ECMA-430 Natural Language Interaction Protocol",
+    "http": "ECMA-431 NLIP over HTTP/HTTPS",
+    "https": "ECMA-431 NLIP over HTTP/HTTPS",
+    "websocket": "ECMA-432 NLIP over WebSocket",
+    "amqp": "ECMA-433 NLIP over AMQP",
+    "ecma-434": "ECMA-434 NLIP Security Profiles",
+    "ecma 434": "ECMA-434 NLIP Security Profiles",
+    "security": "ECMA-434 NLIP Security Profiles",
+    "tr-113": "ECMA TR-113 NLIP Technical Report",
+    "technical report": "ECMA TR-113 NLIP Technical Report",
+}
+STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "does", "for", "from",
+    "how", "in", "is", "it", "of", "on", "or", "the", "to", "what", "with",
+}
 
 
 class NLIPMessage(BaseModel):
@@ -67,7 +86,20 @@ def load_knowledge_base() -> list[dict[str, Any]]:
 
 
 def tokenize(text: str) -> set[str]:
-    return set(re.findall(r"[a-zA-Z0-9-]+", text.lower()))
+    return {
+        token
+        for token in re.findall(r"[a-zA-Z0-9-]+", text.lower())
+        if token not in STOPWORDS and len(token) > 1
+    }
+
+
+def source_boost(query: str, source: str) -> float:
+    query_lower = query.lower()
+    source_lower = source.lower()
+    for keyword, preferred_source in SOURCE_KEYWORD_BOOSTS.items():
+        if keyword in query_lower and preferred_source.lower() in source_lower:
+            return 0.35
+    return 0.0
 
 
 def retrieve(query: str, limit: int = 4) -> list[dict[str, Any]]:
@@ -78,8 +110,11 @@ def retrieve(query: str, limit: int = 4) -> list[dict[str, Any]]:
     scored = []
     for item in load_knowledge_base():
         text = item.get("text", "")
+        source = item.get("source", "")
         terms = tokenize(text)
+        # Lightweight retrieval: term overlap plus source-name boosts for common NLIP standards.
         score = len(query_terms & terms) / max(1, len(query_terms))
+        score += source_boost(query, source)
         if score:
             scored.append((score, item))
 
@@ -107,23 +142,28 @@ def build_prompt(query: str, contexts: list[dict[str, Any]]) -> str:
         return (
             "You are an NLIP knowledge assistant. NLIP means Natural Language "
             "Interaction Protocol. Answer the user's question clearly and concisely. "
+            "Prefer a short direct answer followed by one or two important details. "
             "Use the provided source excerpts when they are relevant. If the excerpts "
             "are only partially relevant, say what you can from them and avoid making "
-            "unsupported claims. Mention source names briefly when useful.\n\n"
+            "unsupported claims. Mention source names briefly when useful. Do not expose "
+            "chain-of-thought or implementation notes.\n\n"
             f"Source excerpts:\n{context_text}\n\nQuestion: {query}\n\nAnswer:"
         )
 
     return (
         "You are an NLIP knowledge assistant. NLIP means Natural Language "
         "Interaction Protocol. Answer the user's question clearly and concisely. "
+        "Prefer a short direct answer followed by one or two important details. "
         "If the question is outside the loaded NLIP material, answer from general "
-        "knowledge and say that no local source excerpt was used.\n\n"
+        "knowledge and say that no local source excerpt was used. Do not expose "
+        "chain-of-thought or implementation notes.\n\n"
         f"Question: {query}\n\nAnswer:"
     )
 
 
 def clean_llm_answer(answer: str) -> str:
     answer = answer.strip()
+    # Jetstream-hosted models sometimes echo prompt scaffolding; remove common demo noise.
     for marker in ("assistantfinal", "assistant final", "Final answer:"):
         if marker in answer:
             answer = answer.split(marker, 1)[1].strip()
@@ -265,6 +305,7 @@ def handle_nlip(message: NLIPMessage) -> dict[str, Any]:
     query = extract_query(message)
     contexts = retrieve(query)
     mode = retrieval_mode(contexts)
+    # If retrieval confidence is weak, still answer through the LLM instead of acting like a fixed FAQ.
     llm_contexts = contexts if mode == "retrieval_augmented" else []
 
     try:
