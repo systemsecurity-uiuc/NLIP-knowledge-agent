@@ -10,6 +10,10 @@ import app as service
 
 
 class APISecurityTests(unittest.TestCase):
+    def test_answer_cleanup_preserves_sentence_start(self):
+        answer = "NLIP (Natural Language Interaction Protocol) is an application-level protocol."
+        self.assertEqual(service.clean_llm_answer(answer), answer)
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.audit = Path(self.directory.name) / "audit.jsonl"

@@ -204,12 +204,6 @@ def clean_llm_answer(answer: str) -> str:
     if "\n\n" in answer and answer.lower().startswith("the user asks"):
         answer = answer.split("\n\n", 1)[1].strip()
 
-    for starter in ("NLIP stands", "NLIP, or", "Natural Language Interaction Protocol"):
-        idx = answer.find(starter)
-        if idx > 0:
-            answer = answer[idx:].strip()
-            break
-
     for bad_tail in (
         "\n```",
         "```json",
