@@ -43,9 +43,11 @@ HTTP with a deterministic handler. It is not a live Jetstream inference test.
   sample counts, false positives, actual attack success, and latency.
 - Test retrieved-document attacks: current input filtering does not inspect corpus
   excerpts, and phrase matching cannot establish a trusted instruction boundary.
-- Deploy full corpus and tested guard to Jetstream; confirm real inference.
-- Establish stable HTTPS, restrict CORS, configure the administrator audit token,
-  and test browser access plus persistence across restart/SSH disconnect.
+- Verify the persistent HTTPS Funnel and GitHub Pages browser workflow across
+  service restart and SSH disconnect. The Jetstream deployment already has the
+  full 103-chunk corpus, real Gemma inference, restricted Pages CORS, and an
+  administrator audit token; external HTTPS, preflight, normal request, and
+  blocked attack passed on 2026-10-26.
 - Prepare reproducible submission materials and a recording using the live service.
 
 ## Known limits

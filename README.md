@@ -172,16 +172,12 @@ credentials. Restrict audit access before public deployment.
 
 ## Permanent Hosting
 
-For short demos, the agent can still be exposed through a temporary HTTPS tunnel.
-For a stable deployment, use a long-running Jetstream service plus HTTPS reverse
-proxy:
-
-1. run the FastAPI app as a `systemd` service bound to `127.0.0.1:8088`
-2. put Caddy in front of it for HTTPS
-3. point a stable NLIP project domain/subdomain to the Jetstream VM
-4. configure the universal client to call the stable `/nlip` endpoint
-
-Example deployment files are in `deploy/`.
+The current Jetstream deployment runs the FastAPI app as a `systemd` service
+bound to `127.0.0.1:8091`. Tailscale Funnel publishes the persistent HTTPS route
+`https://nlip-knowledge-jetstream.tail1f5426.ts.net/nlip`, which the GitHub
+Pages client can call. See `deploy/permanent_endpoint_plan.md` for the topology
+and verification steps. The Caddy and systemd files in `deploy/` are examples
+for other hosts; they are not the current Funnel configuration.
 
 Before installing the example systemd unit, create its referenced
 `security_policy.local.json` and root-owned `/etc/nlip-knowledge-agent.env` (mode
