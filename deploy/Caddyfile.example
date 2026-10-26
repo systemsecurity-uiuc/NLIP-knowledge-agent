@@ -1,0 +1,5 @@
+# Replace nlip-agent.example.org with the stable NLIP/Jetstream domain.
+# The DNS A record should point to the Jetstream VM public IP.
+nlip-agent.example.org {
+    reverse_proxy 127.0.0.1:8088
+}

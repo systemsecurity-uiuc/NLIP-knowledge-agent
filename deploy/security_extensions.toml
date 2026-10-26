@@ -1,0 +1,6 @@
+[security_extensions.knowledge_guard]
+entrypoint = "nlip_security_guard.sdk_extension:KnowledgeSecurityExtension"
+
+[entities.knowledge.security]
+ingress = ["knowledge_guard"]
+egress = ["knowledge_guard"]

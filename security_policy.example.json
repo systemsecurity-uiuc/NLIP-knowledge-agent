@@ -1,0 +1,36 @@
+{
+  "allowed_formats": ["text", "token", "structured", "binary", "location", "generic"],
+  "text_subformats": ["english"],
+  "structured_subformats": ["json", "uri", "xml", "html"],
+  "block_sender_receiver_fields": true,
+  "max_content_chars": 8000,
+  "risky_patterns": {
+    "prompt_injection": [
+      "ignore previous instructions",
+      "ignore all previous instructions",
+      "forget your instructions",
+      "reveal your system prompt",
+      "show your system prompt",
+      "developer message",
+      "hidden instruction",
+      "jailbreak",
+      "bypass policy"
+    ],
+    "secret_exfiltration": [
+      "api key",
+      "access token",
+      "password",
+      "credential",
+      "private key",
+      "secret key",
+      "confidential project",
+      "hidden credentials"
+    ],
+    "unsafe_delegation": [
+      "act as another agent",
+      "impersonate",
+      "perform this action without permission",
+      "send this to another agent secretly"
+    ]
+  }
+}

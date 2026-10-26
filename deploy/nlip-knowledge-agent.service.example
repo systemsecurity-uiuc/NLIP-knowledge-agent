@@ -1,0 +1,22 @@
+[Unit]
+Description=NLIP Knowledge Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=exouser
+WorkingDirectory=/home/exouser/NLIP-knowledge-agent
+Environment=NLIP_MODEL_NAME=gemma-4-31b-it
+Environment=JETSTREAM_CHAT_URL=https://llm.jetstream-cloud.org/gemma-4-31b-it/v1/chat/completions
+Environment=SECURITY_AUDIT_LOG=/home/exouser/NLIP-knowledge-agent/security_audit.jsonl
+Environment=SECURITY_POLICY_PATH=/home/exouser/NLIP-knowledge-agent/security_policy.local.json
+# Store SECURITY_ADMIN_TOKEN and production CORS_ALLOW_ORIGINS here, with
+# permissions 0600 owned by root. Create this file before installing the unit.
+EnvironmentFile=/etc/nlip-knowledge-agent.env
+ExecStart=/home/exouser/NLIP-knowledge-agent/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8088
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

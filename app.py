@@ -1,17 +1,26 @@
 import json
 import os
 import re
+import secrets
 import urllib.request
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from nlip_security_guard import SecurityGuard
 
 
 AGENT_NAME = "nlip-knowledge-agent"
 MODEL_NAME = os.getenv("NLIP_MODEL_NAME", "llama-4-scout")
+SECURITY_AUDIT_LOG = Path(os.getenv("SECURITY_AUDIT_LOG", "security_audit.jsonl"))
+SECURITY_POLICY_PATH = os.getenv("SECURITY_POLICY_PATH", "")
+SECURITY_ADMIN_TOKEN = os.getenv("SECURITY_ADMIN_TOKEN", "")
+SECURITY_GUARD = SecurityGuard.from_policy_file(SECURITY_POLICY_PATH)
 JETSTREAM_CHAT_URL = os.getenv("JETSTREAM_CHAT_URL", "")
 JETSTREAM_API_KEY = os.getenv("JETSTREAM_API_KEY", "")
 CONFIDENTIAL_AGENT_URL = os.getenv("CONFIDENTIAL_AGENT_URL", "")
@@ -39,6 +48,8 @@ STOPWORDS = {
 
 
 class NLIPMessage(BaseModel):
+    # Preserve unexpected fields so the guard can inspect the original envelope.
+    model_config = ConfigDict(extra="allow")
     messageType: str | None = None
     format: str
     subformat: str
@@ -54,6 +65,28 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def invalid_request(request: Request, error: RequestValidationError):
+    # Validation happens before the route. Record a fixed reason, never the
+    # rejected body or Pydantic's input-bearing error details.
+    if request.url.path == "/nlip":
+        from nlip_security_guard.guard import SecurityDecision
+        decision = SecurityDecision(False, "block", ["schema_violation: invalid NLIP request"], "medium")
+        write_security_audit(decision, {})
+        return JSONResponse(status_code=422, content=SECURITY_GUARD.blocked_response(decision))
+    return JSONResponse(status_code=422, content={"detail": "Invalid request parameters"})
+
+
+def require_audit_access(authorization: str | None) -> None:
+    # A missing configuration fails closed. Public model traffic does not need
+    # this token; it is reserved for inspecting operational audit metadata.
+    if not SECURITY_ADMIN_TOKEN:
+        raise HTTPException(status_code=503, detail="Audit access is disabled until SECURITY_ADMIN_TOKEN is configured.")
+    supplied = (authorization or "").removeprefix("Bearer ")
+    if not secrets.compare_digest(supplied.encode(), SECURITY_ADMIN_TOKEN.encode()):
+        raise HTTPException(status_code=401, detail="Audit access requires an administrator bearer token.")
 
 
 def nlip_response(content: Any, subformat: str = "json") -> dict[str, Any]:
@@ -263,6 +296,26 @@ def call_confidential_agent(query: str) -> dict[str, Any] | None:
         return json.loads(response.read().decode("utf-8"))
 
 
+def write_security_audit(decision: Any, message: dict[str, Any]) -> None:
+    record = SECURITY_GUARD.audit_record(decision, message)
+    with SECURITY_AUDIT_LOG.open("a") as log_file:
+        log_file.write(json.dumps(record) + "\n")
+
+
+def read_security_audit(limit: int = 20) -> list[dict[str, Any]]:
+    if not SECURITY_AUDIT_LOG.exists():
+        return []
+
+    lines = SECURITY_AUDIT_LOG.read_text().splitlines()
+    records = []
+    for line in lines[-limit:]:
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            records.append({"parse_error": True, "raw": line})
+    return records
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     return {
@@ -300,8 +353,38 @@ def model_health() -> dict[str, Any]:
     }
 
 
+@app.get("/security/status")
+def security_status() -> dict[str, Any]:
+    status = SECURITY_GUARD.status(
+        protected_agent=AGENT_NAME,
+        audit_log=str(SECURITY_AUDIT_LOG),
+    )
+    status["policy_path"] = SECURITY_POLICY_PATH or "built-in default policy"
+    return status
+
+
+@app.get("/security/audit")
+def security_audit(limit: int = 20, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    require_audit_access(authorization)
+    bounded_limit = max(1, min(limit, 100))
+    return {
+        "status": "ok",
+        "component": "nlip-security-guard",
+        "audit_log": str(SECURITY_AUDIT_LOG),
+        "limit": bounded_limit,
+        "records": read_security_audit(bounded_limit),
+    }
+
+
 @app.post("/nlip")
 def handle_nlip(message: NLIPMessage) -> dict[str, Any]:
+    inbound_message = message.model_dump()
+    decision = SECURITY_GUARD.inspect_inbound(inbound_message)
+    write_security_audit(decision, inbound_message)
+
+    if not decision.allowed:
+        return SECURITY_GUARD.blocked_response(decision)
+
     query = extract_query(message)
     contexts = retrieve(query)
     mode = retrieval_mode(contexts)
@@ -315,6 +398,8 @@ def handle_nlip(message: NLIPMessage) -> dict[str, Any]:
         llm_error = str(error)
     else:
         llm_error = None
+
+    generation_mode = "model" if answer else "unavailable"
 
     if not answer:
         if contexts:
@@ -336,22 +421,30 @@ def handle_nlip(message: NLIPMessage) -> dict[str, Any]:
     if llm_error:
         extra["llm_error"] = llm_error
 
-    return nlip_response(
+    response_message = nlip_response(
         {
             "agent": AGENT_NAME,
             "answer": answer,
             "received_query": query,
             "model": MODEL_NAME,
             "answer_mode": mode,
+            "generation_mode": generation_mode,
             "sources": [
                 {
                     "source": item.get("source"),
                     "url": item.get("url"),
                     "score": item.get("score"),
                 }
-                for item in contexts
+                for item in llm_contexts
             ],
             "extra": extra,
         },
         subformat="json",
     )
+
+    outbound_decision = SECURITY_GUARD.inspect_outbound(response_message)
+    write_security_audit(outbound_decision, response_message)
+    if not outbound_decision.allowed:
+        return SECURITY_GUARD.blocked_response(outbound_decision)
+
+    return response_message
